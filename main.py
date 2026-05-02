@@ -101,3 +101,5 @@ for i in range(range_days):
 
 print("\nDaily trading simulation completed.")
 
+
+
