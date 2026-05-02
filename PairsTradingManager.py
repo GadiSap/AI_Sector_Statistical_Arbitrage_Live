@@ -495,7 +495,7 @@ class PairsTradingManager:
       # Initialize with relevant columns.
       current_trades = pd.DataFrame(columns=[
           'pair_key', 'Ticker1', 'Ticker2', 'status', 'profit', 'intrade',
-          'ticker1_buy_price', 'ticker2_buy_price', 'buy_date', 'sell_date',
+          'ticker1_buy_price', 'ticker2_buy_price',
           'p-value', 'Annualized Training Return', 'Annualized Testing Return',
           'Training Sharpe Ratio', 'Testing Sharpe Ratio', 'Training Max Drawdown', 'Testing Max Drawdown',
           'Training Entry Trades', 'Testing Entry Trades'])
@@ -538,8 +538,7 @@ class PairsTradingManager:
             'intrade': 'no',
             'ticker1_buy_price': 0.0,
             'ticker2_buy_price': 0.0,
-            'buy_date': pd.NaT,  # Initialize new columns
-            'sell_date': pd.NaT   # Initialize new columns
+
         }
         # Add performance metrics from the new_pair_row
         for col in ['p-value', 'Annualized Training Return', 'Annualized Testing Return',
