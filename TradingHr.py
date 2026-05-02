@@ -82,12 +82,7 @@ class TradingHr:
                                       the hedge ratio and spread statistics.
     """
     df_trade_history = pd.read_csv(self.trades_history_file_name).copy()
-    # Convert date columns to datetime objects
-    for col in ['buy_date', 'sell_date']:
-        if col in df_trade_history.columns:
-            df_trade_history[col] = pd.to_datetime(df_trade_history[col], errors='coerce')
 
-    # Add check for empty data_training DataFrame right at the beginning
     if data_training.empty:
         print("Warning: data_training DataFrame is empty. Skipping trading for this period.")
         return # Exit the function if there's no data to process
@@ -204,8 +199,7 @@ class TradingHr:
           row['intrade'] = 'no'         # Mark the trade as closed.
           row['ticker1_buy_price'] = 0.0 # Reset entry prices.
           row['ticker2_buy_price'] = 0.0
-          row['buy_date'] = pd.NaT      # Clear buy date
-          row['sell_date'] = current_date # Record sell date
+
           current_pair_profit_for_timeseries = row['profit'] # Update for time series
       # Second, if the pair is 'active' and there is no trade currently open, check for new entry opportunities.
       # New trades are initiated when the Z-score crosses the entry threshold.
@@ -215,14 +209,12 @@ class TradingHr:
           row['intrade'] = 'yes'
           row['ticker1_buy_price'] = -price_stock1 # Store negative price to indicate short position.
           row['ticker2_buy_price'] = price_stock2  # Store positive price to indicate long position.
-          row['buy_date'] = current_date # Record buy date
-          row['sell_date'] = pd.NaT    # Clear sell date
+
         elif current_z_score <= -self.entry_threshold and current_z_score >= -self.enter_trade_max: # Z-score is low, spread is narrow: Long Ticker1, Short Ticker2
           row['intrade'] = 'yes'
           row['ticker1_buy_price'] = price_stock1  # Store positive price to indicate long position.
           row['ticker2_buy_price'] = -price_stock2 # Store negative price to indicate short position.
-          row['buy_date'] = current_date # Record buy date
-          row['sell_date'] = pd.NaT    # Clear sell date
+
 
       df_trade_history.loc[i] = row
 
