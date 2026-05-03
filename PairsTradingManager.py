@@ -18,7 +18,7 @@ class PairsTradingManager:
                window=90, p_min_coint=0.05, fee=0.005,
                min_training_return=1, min_training_sharpe=1, min_training_trades=0,
                max_training_drawdown=-0.4, min_testing_return=0.8, min_testing_sharpe=1,
-               max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3, enter_trade_max = 3.0):
+               max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3, enter_trade_max = 3.0, min_two_months_profit_for_active=0.03, results_output_dir='.'):
     """
     Initializes the PairsTradingManager.
 
@@ -52,6 +52,8 @@ class PairsTradingManager:
     self.min_testing_sharpe = min_testing_sharpe
     self.max_testing_drawdown = max_testing_drawdown
     self.min_sharpe_ratio_stability = min_sharpe_ratio_stability
+    self.min_two_months_profit_for_active = min_two_months_profit_for_active
+    self.results_output_dir = results_output_dir
 
   def _perform_coint_test(self, df_AI_data, start_date, end_date):
     """
@@ -399,7 +401,7 @@ class PairsTradingManager:
 
     df_pair_results = pd.DataFrame(all_pair_results)
     # Save all individual pair results to a CSV file for detailed review.
-    df_pair_results.to_csv(f'all_pair_results_{testing_end_date}.csv', index=False)
+    df_pair_results.to_csv(os.path.join(self.results_output_dir, f'all_pair_results_{testing_end_date}.csv'), index=False)
 
     # If no pairs were analyzed, return empty DataFrames.
     if df_pair_results.empty:
@@ -495,7 +497,7 @@ class PairsTradingManager:
       # Initialize with relevant columns.
       current_trades = pd.DataFrame(columns=[
           'pair_key', 'Ticker1', 'Ticker2', 'status', 'profit', 'intrade',
-          'ticker1_buy_price', 'ticker2_buy_price',
+          'Ticker1 Buy Price', 'Ticker2 Buy Price', 'Two Months Profit',
           'p-value', 'Annualized Training Return', 'Annualized Testing Return',
           'Training Sharpe Ratio', 'Testing Sharpe Ratio', 'Training Max Drawdown', 'Testing Max Drawdown',
           'Training Entry Trades', 'Testing Entry Trades'])
@@ -514,13 +516,17 @@ class PairsTradingManager:
 
       # Case 1: The existing pair is also in the newly optimized list
       if row_dict['pair_key'] in new_optimized_pair_keys_set:
+        row_dict['Two Months Profit'] = 0
         # If it was previously 'inactive' reactivate it.
         if row_dict['status'] == 'inactive':
           row_dict['status'] = 'active'
+
       # Case 2: The existing pair is NO LONGER in the newly optimized list
       else:
-        if row_dict['profit'] <= 0:
+        # If two months profit is more than min_two_months_profit_for_active keep it active
+        if row_dict['Two Months Profit'] <= self.min_two_months_profit_for_active:
           row_dict['status'] = 'inactive'
+        row_dict['Two Months Profit'] = 0
 
       updated_trades_list.append(row_dict)
 
@@ -536,9 +542,9 @@ class PairsTradingManager:
             'status': 'active',
             'profit': 0.0,
             'intrade': 'no',
-            'ticker1_buy_price': 0.0,
-            'ticker2_buy_price': 0.0,
-
+            'Ticker1 Buy Price': 0.0,
+            'Ticker2 Buy Price': 0.0,
+            'Two Months Profit': 0.0
         }
         # Add performance metrics from the new_pair_row
         for col in ['p-value', 'Annualized Training Return', 'Annualized Testing Return',
@@ -555,14 +561,12 @@ class PairsTradingManager:
     df_new_trades_history.to_csv(self.trades_file, index=False)
 
 
-
-
 def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', trades_history_file_name = 'trades_history1.csv',
                  entry_threshold=1.5, exit_threshold=0.2, stop_loss_threshold=4.5,
                  window=90, p_min_coint=0.05, fee=0.005, enter_trade_max = 3.0,
                  min_training_return=1, min_training_sharpe=1, min_training_trades=0,
                  max_training_drawdown=-0.4, min_testing_return=0.8, min_testing_sharpe=1,
-                 max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3):
+                 max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3, min_two_months_profit_for_active=0.03, results_output_dir='.'):
     """
     Orchestrates the training and optimization process for pairs trading.
     This function identifies cointegrated pairs, evaluates their performance
@@ -594,7 +598,8 @@ def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', tra
                  window=window, p_min_coint=p_min_coint, fee=fee, enter_trade_max=enter_trade_max,
                  min_training_return=min_training_return, min_training_sharpe=min_training_sharpe, min_training_trades=min_training_trades,
                  max_training_drawdown=max_training_drawdown, min_testing_return=min_testing_return, min_testing_sharpe=min_testing_sharpe,
-                 max_testing_drawdown=max_testing_drawdown, min_sharpe_ratio_stability=min_sharpe_ratio_stability)
+                 max_testing_drawdown=max_testing_drawdown, min_sharpe_ratio_stability=min_sharpe_ratio_stability, min_two_months_profit_for_active=min_two_months_profit_for_active,
+                 results_output_dir=results_output_dir)
     # --- Define Dates training and Optimization ---
     date_ref = pd.to_datetime(initial_date_ref_str)
     initial_testing_end_date = date_ref - timedelta(days=1)
@@ -619,7 +624,7 @@ def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', tra
     )
     # Save the full cointegration results to a CSV
     df_initial_full_coint = pd.DataFrame(initial_full_coint_results)
-    df_initial_full_coint.to_csv('full_coint_results_initial_testing.csv', index=False)
+    df_initial_full_coint.to_csv(os.path.join(results_output_dir, 'full_coint_results_initial_testing.csv'), index=False)
 
     # 2. Select initial optimized pairs based on performance
     df_optimized_pairs, _ = PairsTraining._select_optimized_pairs(
