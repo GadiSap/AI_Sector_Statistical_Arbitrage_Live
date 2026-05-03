@@ -11,7 +11,6 @@ from TradingHr import day_trade
 from PairsTradingManager import PairsTradingManager
 from PairsTradingManager import training_and_optimization
 
-
 ai_tickers = [
     "NVDA", "AMD", "AVGO", "TSM", "ASML", "ARM", "MU", "AMAT", "LRCX", "KLAC",
     "INTC", "MRVL", "QCOM", "ADI", "TXN", "TER", "NVMI", "ENTG", "MKSI",
@@ -24,10 +23,14 @@ ai_tickers = [
     "KSCP", "LTRN", "BFRG", "TCEHY", "BABA", "BIDU", "CDNS", "SNPS",
     "PSTG", "KVYO", "ESTC", "FRSH", "IOT", "MSTR"
 ]
-
 # Define file names for trade history and time series data
-trades_history_file_name = 'trades_history.csv' # File to store the history of all trades made by the strategy.
-time_series_file_name = 'trade_time_series.csv' # File to store time-series data for analysis and plotting (Z-score, profits, etc.).
+trades_history_file_name = 'files/trades_history2.csv' # File to store the history of all trades made by the strategy.
+time_series_file_name = 'files/trade_time_series2.csv' # File to store time-series data for analysis and plotting (Z-score, profits, etc.).
+
+# Ensure the 'files' directory exists
+import os
+os.makedirs('files', exist_ok=True)
+
 # Parameters:
 initial_date_ref_str = '2026-01-01' # Starting point for the initial training and optimization phase.
 date = '2026-04-16' # The end date for the entire simulation period.
@@ -50,21 +53,24 @@ min_testing_return_param = 1 # Minimum annualized return required for a pair dur
 min_testing_sharpe_param = 1 # Minimum Sharpe Ratio required for a pair during the testing period.
 max_testing_drawdown_param = -0.3 # Maximum acceptable drawdown for a pair during the testing period.
 min_sharpe_ratio_stability_param = 0.5 # Minimum ratio of Testing Sharpe Ratio to Training Sharpe Ratio, ensuring consistent performance.
+min_two_months_profit_for_active_param = 0.03 # Minimum 'Two Months Profit' for a pair to remain active if no longer optimized.
 
 # --- Initial Training and Optimization ---
 # This step identifies the initial set of cointegrated pairs and optimizes their parameters.
-# The results are stored in trades_history_file_name .
+# The results are stored in trades_history_file_name.
 training_and_optimization(ai_tickers, initial_date_ref_str, trades_history_file_name,
                  entry_threshold=entry_threshold_param, exit_threshold=exit_threshold_param, stop_loss_threshold=stop_loss_threshold_param,
                  window=window_param, p_min_coint=p_min_coint_param, fee=fee_param, enter_trade_max=enter_trade_max_param,
                  min_training_return=min_training_return_param, min_training_sharpe=min_training_sharpe_param, min_training_trades=min_training_trades_param,
                  max_training_drawdown=max_training_drawdown_param, min_testing_return=min_testing_return_param, min_testing_sharpe=min_testing_sharpe_param,
-                 max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param)
+                 max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param, min_two_months_profit_for_active=min_two_months_profit_for_active_param,
+                 results_output_dir='files')
 # --- Daily Trading Simulation ---
 # Initialize the time series file to ensure a clean start with all expected columns.
 # This file will record daily Z-scores, pair profits, and trade statuses for later analysis.
-
-pd.DataFrame(columns=['Date', 'Ticker1', 'Ticker2', 'Z-score', 'Pair Profit', 'Intrade Status', 'Current Trade PnL']).to_csv(time_series_file_name, index=False)
+if os.path.exists(time_series_file_name):
+    os.remove(time_series_file_name)
+pd.DataFrame(columns=['Date', 'Ticker1', 'Ticker2', 'Z-score', 'Pair Profit', 'Intrade Status', 'Current Trade PnL', 'Two Months Profit']).to_csv(time_series_file_name, index=False)
 
 print("\nStarting daily trading simulation...")
 
@@ -97,9 +103,7 @@ for i in range(range_days):
                               window=window_param, p_min_coint=p_min_coint_param, fee=fee_param, enter_trade_max=enter_trade_max_param,
                               min_training_return=min_training_return_param, min_training_sharpe=min_training_sharpe_param, min_training_trades=min_training_trades_param,
                               max_training_drawdown=max_training_drawdown_param, min_testing_return=min_testing_return_param, min_testing_sharpe=min_testing_sharpe_param,
-                              max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param)
+                              max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param, min_two_months_profit_for_active=min_two_months_profit_for_active_param,
+                              results_output_dir='files')
 
 print("\nDaily trading simulation completed.")
-
-
-
