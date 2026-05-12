@@ -142,6 +142,7 @@ class PairsTradingManager:
             - cumulative_returns_ticker2 (pd.Series): Cumulative returns of ticker2 (buy and hold).
             - portfolio_returns (pd.Series): Raw portfolio returns for each period.
     """
+
     # Calculate the spread: Ticker1's price minus hedge_ratio * Ticker2's price.
     spread = data_period[ticker1] - hedge_ratio * data_period[ticker2]
     # Calculate rolling mean and standard deviation for the spread.
@@ -232,6 +233,10 @@ class PairsTradingManager:
         # The maximum drawdown is the minimum (most negative) value of the drawdown series.
         max_drawdown = drawdown.min()
 
+    # If hedge ratio is negative set num_entry_trades to zero to eliminate these pairs
+    if hedge_ratio <= 0:
+        num_entry_trades = 0
+
     return (
         annualized_returns,
         annualized_returns_ticker1,
@@ -290,6 +295,7 @@ class PairsTradingManager:
     model_train = sm.OLS(data_training[ticker1], X_train)
     results_train = model_train.fit()
     hedge_ratio = results_train.params[ticker2] # Extract the hedge ratio (slope coefficient for Ticker2).
+
 
     # Simulate trades and calculate performance metrics for the training period using the derived hedge ratio.
     (annualized_returns_train,
