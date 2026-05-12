@@ -242,7 +242,7 @@ class TradingHr:
       # If hedge ratio > max_hedge_ratio do not trade this pair
       # New trades are initiated when the Z-score crosses the entry threshold.
       # 'active' status indicates that the pair is eligible for new trades.
-      elif row['status'] == 'active' and row['intrade'] == 'no' and row['Hedge Ratio'] < self.max_hedge_ratio:
+      elif row['status'] == 'active' and row['intrade'] == 'no' and row['Hedge Ratio'] < self.max_hedge_ratio and row['Hedge Ratio'] > 1.0/self.max_hedge_ratio:
         if current_z_score >= self.entry_threshold and current_z_score <= self.enter_trade_max: # Z-score is high, spread is wide: Short Ticker1, Long Ticker2
           row['intrade'] = 'yes'
           row['Ticker1 Buy Price'] = -price_stock1 # Store negative price to indicate short position.
