@@ -81,7 +81,7 @@ if __name__ == '__main__':
     ]
     # Define file names for trading
     directory = 'files/training'
-    trades_history_file_name = 'training_trades_history_hedge.csv' # File to store the history of all trades made by the strategy.
+    trades_history_file_name = 'training_trades_history_hedge_new.csv' # File to store the history of all trades made by the strategy.
 
     if not os.path.exists(directory):
         # if directory does not exist it will create it
@@ -145,7 +145,7 @@ if __name__ == '__main__':
         'Entry Threshold', 'Exit Threshold', 'Stop Loss Threshold', 'Enter Trade Max',
         'Window', 'Days for Hedge Calc',
         'Ticker1', 'Ticker2', 'Cointegration P-value', 'Cointegration Score', 'Crit Value',
-        'Training Annualized Return', 'Testing Annualized Return', 'Simulation Annualized Return',
+        'Annualized Training Return', 'Annualized Testing Return', 'Simulation Annualized Return',
         'Training Sharpe Ratio', 'Testing Sharpe Ratio', 'Simulation Sharpe Ratio',
         'Training Max Drawdown', 'Testing Max Drawdown', 'Simulation Max Drawdown',
         'Training Entry Trades', 'Testing Entry Trades', 'Simulation Entry Trades',
