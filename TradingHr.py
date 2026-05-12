@@ -13,7 +13,7 @@ class TradingHr:
   A class to manage a pairs trading strategy, including entry, exit, and stop-loss conditions.
   Trades are managed based on Z-scores of the spread between two cointegrated assets.
   """
-  def __init__(self, trades_history_file_name = 'trades.csv', time_series_file_name = 'trade_time_series.csv', fee = 0.005, entry_threshold = 1.5, exit_threshold = 0.2, stop_loss_threshold = 4.5, enter_trade_max = 3.0, compounded_profit=False):
+  def __init__(self, trades_history_file_name = 'trades.csv', time_series_file_name = 'trade_time_series.csv', fee = 0.005, entry_threshold = 1.5, exit_threshold = 0.2, stop_loss_threshold = 4.5, enter_trade_max = 3.0, compounded_profit=False, window = 140, max_hedge_ratio = 5.0):
     """
     Initializes the TradingHr strategy parameters.
 
@@ -35,10 +35,12 @@ class TradingHr:
     self.trades_history_file_name = trades_history_file_name
     self.time_series_file_name = time_series_file_name
     self.compounded_profit = compounded_profit
+    self.window = window
+    self.max_hedge_ratio = max_hedge_ratio
 
     # Initialize the time series file with header if it doesn't exist
     if not os.path.exists(self.time_series_file_name):
-        pd.DataFrame(columns=['Date', 'Ticker1', 'Ticker2', 'Z-score', 'Pair Profit', 'Intrade Status', 'Current Trade PnL']).to_csv(self.time_series_file_name, index=False)
+        pd.DataFrame(columns=['Date', 'Ticker1', 'Ticker2', 'Z-score', 'Pair Profit', 'Intrade Status', 'Current Trade PnL', 'Two Months Profit']).to_csv(self.time_series_file_name, index=False)
 
 
   def sell(self, enter_price_stock1: float, enter_price_stock2: float, price_stock1: float, price_stock2: float, hedge_ratio: float) -> float:
@@ -67,8 +69,8 @@ class TradingHr:
     if enter_price_stock2 < 0:
       prct_stock2 = -1 * prct_stock2
 
-    # Calculate portfolio returns, accounting for the hedge ratio and transaction fee.
-    # The hedge ratio (beta) scales the return of the second stock relative to the first.
+    # Calculate pair trade return, accounting for the hedge ratio and transaction fee.
+    # The hedge ratio scales the return of the second stock relative to the first.
     # The denominator (1 + abs(hedge_ratio)) normalizes the return by the total capital at risk.
     pair_returns = (prct_stock1 + hedge_ratio * prct_stock2) / (1 + abs(hedge_ratio)) - self.fee
 
@@ -85,9 +87,6 @@ class TradingHr:
                                       the hedge ratio and spread statistics.
     """
     df_trade_history = pd.read_csv(self.trades_history_file_name).copy()
-    # Ensure 'Trade Hedge Ratio' column exists, initialize if not.
-    if 'Trade Hedge Ratio' not in df_trade_history.columns:
-        df_trade_history['Trade Hedge Ratio'] = 0.0
 
     # Add check for empty data_training DataFrame right at the beginning
     if data_training.empty:
@@ -103,6 +102,17 @@ class TradingHr:
 
       ticker1 = row['Ticker1']
       ticker2 = row['Ticker2']
+
+      # Use hedge_ratio from the file
+      if row['intrade'] == 'yes':
+        hedge_ratio = row['Trade Hedge Ratio']
+      else:
+        #hedge_ratio = row['Hedge Ratio']
+        # Calculate hedge ratio using OLS
+        X = sm.add_constant(data_training[ticker2])
+        model = sm.OLS(data_training[ticker1], X).fit()
+        hedge_ratio = model.params[ticker2]
+        row['Hedge Ratio'] = hedge_ratio # Store the hedge ratio for this pair
 
       # Check if both tickers are present in the current data_training DataFrame
       if ticker1 not in data_training.columns or ticker2 not in data_training.columns:
@@ -155,26 +165,27 @@ class TradingHr:
           })
           continue # Skip to the next pair
 
-      # --- Core Calculations: Hedge Ratio, Spread, and Z-score ---
-      # These calculations are performed for every pair, regardless of its 'status' or 'intrade' status,
-      # as they are needed to assess potential trade actions or manage existing ones.
+      # --- Core Calculations: Spread, and Z-score ---
+      # Calculate the spread for the entire look-back window (data_training)
+      spread_series = data_training[ticker1] - hedge_ratio * data_training[ticker2]
 
-      # Calculate the hedge ratio (beta) using OLS regression. Ticker1 is the dependent variable.
-      X_train = sm.add_constant(data_training[ticker2]) # Corrected: add_add_constant to add_constant
-      model = sm.OLS(data_training[ticker1], X_train).fit()
-      hedge_ratio = model.params[ticker2]
+      # Calculate rolling mean and standard deviation for the spread
+      # We need the last valid mean and std from the rolling window for the current Z-score calculation
+      rolling_mean = spread_series.rolling(window=self.window, min_periods=1).mean()
+      rolling_std = spread_series.rolling(window=self.window, min_periods=1).std()
 
-      # Calculate the spread: Ticker1's price minus hedge_ratio * Ticker2's price.
-      # The spread represents the difference between the two assets, adjusted by their historical relationship.
-      spread = data_training[ticker1] - hedge_ratio * data_training[ticker2]
+      # Get the Z-score mean and std for the current point in time
+      z_mean = rolling_mean.iloc[-1]
+      z_std = rolling_std.iloc[-1]
 
-      # Calculate the mean and standard deviation of the spread over the `data_training` period.
-      z_mean = spread.mean()
-      z_std = spread.std()
-
-      # Calculate the current Z-score of the spread.
-      # The Z-score measures how many standard deviations the current spread is from its mean.
-      current_z_score = (spread.iloc[-1] - z_mean) / z_std
+      # Calculate the current Z-score of the spread using the last value of the spread
+      # and the corresponding rolling mean and std.
+      current_spread_value = spread_series.iloc[-1]
+      current_z_score = np.nan # Initialize to NaN to handle division by zero safely
+      if z_std != 0:
+          current_z_score = (current_spread_value - z_mean) / z_std
+      else:
+          print(f"Warning: Z-score standard deviation for {ticker1}/{ticker2} is zero. Z-score set to NaN for this period.")
 
       # Initialize current_pair_profit with the already realized profit
       cumulative_realized_profit = row['profit']
@@ -185,7 +196,7 @@ class TradingHr:
 
       # First, check if there is an open trade (intrade == 'yes') that needs to be closed.
       if row['intrade'] == 'yes':
-        # Calculate unrealized profit for the *current open trade* (percentage return for this trade)
+        # Calculate unrealized profit for the current open trade (percentage return for this trade)
         enter_price_stock1 = row['Ticker1 Buy Price']
         enter_price_stock2 = row['Ticker2 Buy Price']
         # Use the stored hedge ratio for calculations related to an open trade
@@ -224,24 +235,29 @@ class TradingHr:
           row['intrade'] = 'no'         # Mark the trade as closed.
           row['Ticker1 Buy Price'] = 0.0 # Reset entry prices.
           row['Ticker2 Buy Price'] = 0.0
-          row['Trade Hedge Ratio'] = 0.0 # Reset stored hedge ratio
+          row['Trade Hedge Ratio'] = 0.0 # Reset trade hedge ratio.
 
           current_pair_profit_for_timeseries = row['profit'] # Update for time series
       # Second, if the pair is 'active' and there is no trade currently open, check for new entry opportunities.
+      # If hedge ratio > max_hedge_ratio do not trade this pair
       # New trades are initiated when the Z-score crosses the entry threshold.
       # 'active' status indicates that the pair is eligible for new trades.
-      elif row['status'] == 'active' and row['intrade'] == 'no':
+      elif row['status'] == 'active' and row['intrade'] == 'no' and row['Hedge Ratio'] < self.max_hedge_ratio:
         if current_z_score >= self.entry_threshold and current_z_score <= self.enter_trade_max: # Z-score is high, spread is wide: Short Ticker1, Long Ticker2
           row['intrade'] = 'yes'
           row['Ticker1 Buy Price'] = -price_stock1 # Store negative price to indicate short position.
           row['Ticker2 Buy Price'] = price_stock2  # Store positive price to indicate long position.
-          row['Trade Hedge Ratio'] = hedge_ratio # Store the hedge ratio at the time of entry
+          row['Trade Hedge Ratio'] = row['Hedge Ratio'] # Store the hedge ratio at the time of entry
+          # row['Z Mean'] = z_mean # Store the Z-score mean for this pair
+          # row['Z STD'] = z_std # Store the Z-score standard deviation for this pair
 
         elif current_z_score <= -self.entry_threshold and current_z_score >= -self.enter_trade_max: # Z-score is low, spread is narrow: Long Ticker1, Short Ticker2
           row['intrade'] = 'yes'
           row['Ticker1 Buy Price'] = price_stock1  # Store positive price to indicate long position.
           row['Ticker2 Buy Price'] = -price_stock2 # Store negative price to indicate short position.
-          row['Trade Hedge Ratio'] = hedge_ratio # Store the hedge ratio at the time of entry
+          row['Trade Hedge Ratio'] = row['Hedge Ratio'] # Store the hedge ratio at the time of entry
+          # row['Z Mean'] = z_mean # Store the Z-score mean for this pair
+          # row['Z STD'] = z_std # Store the Z-score standard deviation for this pair
 
       df_trade_history.loc[i] = row
 
@@ -260,22 +276,21 @@ class TradingHr:
     # After iterating through all pairs, save the updated trade history to the CSV file.
     df_trade_history.to_csv(self.trades_history_file_name, index=False)
 
-    # Append current day's time-series data to the time series file
+    # Append the time series records for this day to the time series file.
     if time_series_records_for_this_day:
-        df_time_series_today = pd.DataFrame(time_series_records_for_this_day)
-        df_time_series_today.to_csv(self.time_series_file_name, mode='a', header=False, index=False)
+        df_current_day_time_series = pd.DataFrame(time_series_records_for_this_day)
+        df_current_day_time_series.to_csv(self.time_series_file_name, mode='a', header=False, index=False)
 
-def day_trade(df_AI_data, trades_history_file_name, time_series_file_name, fee = 0.005, entry_threshold = 1.5, exit_threshold = 0.2, stop_loss_threshold = 4.5, enter_trade_max = 3.0):
+
+def day_trade(df_AI_data, trades_history_file_name, time_series_file_name, fee = 0.005, entry_threshold = 1.5, exit_threshold = 0.2, stop_loss_threshold = 4.5, enter_trade_max = 3.0, compounded_profit=True, window=90, max_hedge_ratio = 5):
   """
   This function simulates the execution of the `TradingHr` strategy for a single trading day,
   processing data in trades_history_file_name and time_series_file_name.
   """
   for i in range(6, -0, -1):
-    strategy = TradingHr(trades_history_file_name, time_series_file_name, fee, entry_threshold, exit_threshold, stop_loss_threshold, enter_trade_max)
+    strategy = TradingHr(trades_history_file_name, time_series_file_name, fee, entry_threshold, exit_threshold, stop_loss_threshold, enter_trade_max, compounded_profit, window=window, max_hedge_ratio=max_hedge_ratio)
     # Call the trading function
     strategy.trading(df_AI_data[:-i])
-  strategy = TradingHr(trades_history_file_name, time_series_file_name, fee, entry_threshold, exit_threshold, stop_loss_threshold, enter_trade_max)
+  strategy = TradingHr(trades_history_file_name, time_series_file_name, fee, entry_threshold, exit_threshold, stop_loss_threshold, enter_trade_max, compounded_profit, window=window, max_hedge_ratio=max_hedge_ratio)
   # Call the trading function
   strategy.trading(df_AI_data)
-
-
