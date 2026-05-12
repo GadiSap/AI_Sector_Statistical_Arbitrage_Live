@@ -14,11 +14,17 @@ class PairsTradingManager:
   """
 
   def __init__(self, ai_tickers, trades_file='trades.csv',
-               entry_threshold=1.5, exit_threshold=0.2, stop_loss_threshold=4.5,
-               window=90, p_min_coint=0.05, fee=0.005,
+               entry_threshold=1.5, exit_threshold=0.5, stop_loss_threshold=3.5,
+               window=140, p_min_coint=0.05, fee=0.005,
                min_training_return=1, min_training_sharpe=1, min_training_trades=0,
                max_training_drawdown=-0.4, min_testing_return=0.8, min_testing_sharpe=1,
-               max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3, enter_trade_max = 3.0, min_two_months_profit_for_active=0.03, results_output_dir='.'):
+               max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.5,
+               max_sharpe_ratio_stability=2.0,
+               min_annual_return_stability_ratio=0.3,
+               max_annual_return_stability_ratio=2.0,
+               min_testing_entry_trades=1,
+               max_testing_entry_trades=8,
+               enter_trade_max = 2.5, min_two_months_profit_for_active=0.03, results_output_dir='.'):
     """
     Initializes the PairsTradingManager.
 
@@ -52,6 +58,11 @@ class PairsTradingManager:
     self.min_testing_sharpe = min_testing_sharpe
     self.max_testing_drawdown = max_testing_drawdown
     self.min_sharpe_ratio_stability = min_sharpe_ratio_stability
+    self.max_sharpe_ratio_stability = max_sharpe_ratio_stability
+    self.min_annual_return_stability_ratio = min_annual_return_stability_ratio
+    self.max_annual_return_stability_ratio = max_annual_return_stability_ratio
+    self.min_testing_entry_trades = min_testing_entry_trades
+    self.max_testing_entry_trades = max_testing_entry_trades
     self.min_two_months_profit_for_active = min_two_months_profit_for_active
     self.results_output_dir = results_output_dir
 
@@ -97,7 +108,7 @@ class PairsTradingManager:
             results_list.append({'Ticker1': ticker1, 'Ticker2': ticker2, 'p-value': np.nan, 'Score': np.nan, 'Crit_Value': np.nan, 'Error': str(e)})
             continue
           else:
-            results_list.append({'Ticker1': ticker1, 'Ticker2': ticker2, 'p-value': pvalue, 'Score': score, 'Crit_Value': crit_value})
+            results_list.append({'Ticker1': ticker1, 'Ticker2': ticker2, 'p-value': pvalue, 'Score': np.nan, 'Crit_Value': crit_value})
             if pvalue < self.p_min_coint:
               stock_pairs_p_min.append((ticker1, ticker2, pvalue, score, crit_value))
         else:
@@ -173,8 +184,8 @@ class PairsTradingManager:
     returns_ticker2 = data_period[ticker2].pct_change()
 
     # Calculate portfolio returns for the pairs trading strategy.
-    # The formula accounts for the hedge ratio and assumes that a position taken at time `t-1`
-    # generates returns based on price changes from `t-1` to `t`.
+    # The formula accounts for the hedge ratio and assumes that a position taken at time t-1
+    # generates returns based on price changes from t-1 to t.
     # The denominator (1 + abs(hedge_ratio)) normalizes the return by the total capital at risk.
     portfolio_returns = position.shift(1) * (returns_ticker1 - hedge_ratio * returns_ticker2) / (1 + abs(hedge_ratio))
     # Fill any NaN values (e.g., at the beginning of the series) with 0, as no trade occurred then.
@@ -299,9 +310,9 @@ class PairsTradingManager:
     data_testing_raw = df_AI_data.loc[testing_start_date:testing_end_date, [ticker1, ticker2]]
     data_testing_raw = data_testing_raw.dropna() # Remove missing data.
 
-    # Prepare `data_testing` by potentially adding `window - 1` data points from the end of `data_training`.
-    # This is a common practice to 'warm up' rolling window calculations (like Z-score) in the testing period,
-    # ensuring that the `window` size is fully populated from the start of the testing period.
+    # Prepare `data_testing` by adding `window - 1` data points from the end of `data_training`.
+    # This 'warm up' rolling window ensures that the `window` size is fully populated
+    # from the start of the testing period.
     if len(data_training) >= self.window - 1:
       warmup_data = data_training[[ticker1, ticker2]].tail(self.window - 1)
       data_testing = pd.concat([warmup_data, data_testing_raw])
@@ -388,7 +399,8 @@ class PairsTradingManager:
       sharpe_ratio_training, max_drawdown_training, sharpe_ratio_testing, max_drawdown_testing, _, _, _ = \
       self._analyze_pair_performance(df_AI, ticker1, ticker2, coint_pvalue=pvalue, coint_score=score,
                                     training_start_date=training_start_date, training_end_date=training_end_date,
-                                    testing_start_date=testing_start_date, testing_end_date=testing_end_date)
+                                    testing_start_date=testing_start_date,
+                                    testing_end_date=testing_end_date)
 
       # Store the results for each pair.
       all_pair_results.append({
@@ -412,18 +424,41 @@ class PairsTradingManager:
       ])
       return empty_optimized_df, df_pair_results
 
-    # Filter pairs based on the specified optimization criteria (min returns, min Sharpe, max drawdown, etc.).
+    # --- Filter pairs based on the specified optimization criteria ---
+    # Ensure relevant columns are numeric before calculations
+    for col in ['Annualized Training Return', 'Annualized Testing Return',
+                'Training Sharpe Ratio', 'Testing Sharpe Ratio']:
+        df_pair_results[col] = pd.to_numeric(df_pair_results[col], errors='coerce')
+
+    # Calculate Sharpe Stability Ratio
+    df_pair_results['Sharpe Stability Ratio'] = np.where(
+        (df_pair_results['Training Sharpe Ratio'].isna()) | (df_pair_results['Training Sharpe Ratio'].abs() < 1e-6),
+        np.nan,
+        df_pair_results['Testing Sharpe Ratio'] / df_pair_results['Training Sharpe Ratio']
+    )
+
+    # Calculate Annualized Return Stability Ratio
+    df_pair_results['Annualized Return Stability Ratio'] = np.where(
+        (df_pair_results['Annualized Training Return'].isna()) | (df_pair_results['Annualized Training Return'].abs() < 1e-6),
+        np.nan,
+        df_pair_results['Annualized Testing Return'] / df_pair_results['Annualized Training Return']
+    )
+
     df_optimized_pairs = df_pair_results[
-        (df_pair_results['Annualized Training Return'] > self.min_training_return) & \
-        (df_pair_results['Training Sharpe Ratio'] > self.min_training_sharpe) & \
-        (df_pair_results['Training Entry Trades'] > self.min_training_trades) & \
-        (df_pair_results['Training Max Drawdown'] > self.max_training_drawdown) & \
-        (df_pair_results['Annualized Testing Return'] > self.min_testing_return) & \
-        (df_pair_results['Testing Sharpe Ratio'] > self.min_testing_sharpe) & \
-        (df_pair_results['Training Entry Trades'] > 0) & # Ensure at least one trade was made in training.\
-        (df_pair_results['Testing Max Drawdown'] > self.max_testing_drawdown) & \
-        (df_pair_results['Testing Sharpe Ratio'] / df_pair_results['Training Sharpe Ratio'] > self.min_sharpe_ratio_stability)
-    ]
+        (df_pair_results['Annualized Training Return'] >= self.min_training_return) &
+        (df_pair_results['Training Sharpe Ratio'] >= self.min_training_sharpe) &
+        (df_pair_results['Training Entry Trades'] >= self.min_training_trades) &
+        (df_pair_results['Training Max Drawdown'] >= self.max_training_drawdown) &
+        (df_pair_results['Annualized Testing Return'] >= self.min_testing_return) &
+        (df_pair_results['Testing Sharpe Ratio'] >= self.min_testing_sharpe) &
+        (df_pair_results['Testing Max Drawdown'] >= self.max_testing_drawdown) &
+        (df_pair_results['Testing Entry Trades'] >= self.min_testing_entry_trades) &
+        (df_pair_results['Testing Entry Trades'] <= self.max_testing_entry_trades) &
+        (df_pair_results['Sharpe Stability Ratio'] >= self.min_sharpe_ratio_stability) &
+        (df_pair_results['Sharpe Stability Ratio'] <= self.max_sharpe_ratio_stability) &
+        (df_pair_results['Annualized Return Stability Ratio'] >= self.min_annual_return_stability_ratio) &
+        (df_pair_results['Annualized Return Stability Ratio'] <= self.max_annual_return_stability_ratio)
+    ].copy() # Use .copy() to avoid SettingWithCopyWarning
 
     # Sort the optimized pairs by their annualized training return in descending order.
     return df_optimized_pairs.sort_values(by='Annualized Training Return', ascending=False), df_pair_results
@@ -497,7 +532,7 @@ class PairsTradingManager:
       # Initialize with relevant columns.
       current_trades = pd.DataFrame(columns=[
           'pair_key', 'Ticker1', 'Ticker2', 'status', 'profit', 'intrade',
-          'Ticker1 Buy Price', 'Ticker2 Buy Price', 'Two Months Profit',
+          'Ticker1 Buy Price', 'Ticker2 Buy Price', 'Two Months Profit', 'Hedge Ratio', 'Trade Hedge Ratio',
           'p-value', 'Annualized Training Return', 'Annualized Testing Return',
           'Training Sharpe Ratio', 'Testing Sharpe Ratio', 'Training Max Drawdown', 'Testing Max Drawdown',
           'Training Entry Trades', 'Testing Entry Trades'])
@@ -544,7 +579,9 @@ class PairsTradingManager:
             'intrade': 'no',
             'Ticker1 Buy Price': 0.0,
             'Ticker2 Buy Price': 0.0,
-            'Two Months Profit': 0.0
+            'Two Months Profit': 0.0,
+            'Hedge Ratio': 0.0,
+            'Trade Hedge Ratio': 0.0
         }
         # Add performance metrics from the new_pair_row
         for col in ['p-value', 'Annualized Training Return', 'Annualized Testing Return',
@@ -560,13 +597,155 @@ class PairsTradingManager:
     df_new_trades_history = pd.DataFrame(updated_trades_list)
     df_new_trades_history.to_csv(self.trades_file, index=False)
 
+  def evaluate_strategy_parameters(self, df_AI_data, coint_start_date, coint_end_date,
+                                   training_start_date,
+                                   testing_start_date, real_scenario_start_date, real_scenario_end_date,
+                                   days_for_hedge_calc, pre_computed_stock_pairs_p_min=None):
+    """
+    Evaluates strategy parameters by performing cointegration tests, analyzing pair performance
+    over training and testing periods, and simulating an additional real-date scenario.
 
-def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', trades_history_file_name = 'trades_history1.csv',
-                 entry_threshold=1.5, exit_threshold=0.2, stop_loss_threshold=4.5,
-                 window=90, p_min_coint=0.05, fee=0.005, enter_trade_max = 3.0,
-                 min_training_return=1, min_training_sharpe=1, min_training_trades=0,
-                 max_training_drawdown=-0.4, min_testing_return=0.8, min_testing_sharpe=1,
-                 max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.3, min_two_months_profit_for_active=0.03, results_output_dir='.'):
+    Args:
+        df_AI_data (pd.DataFrame): DataFrame with historical data for all tickers.
+        coint_start_date (str): Start date for the cointegration test period.
+        coint_end_date (str): End date for the cointegration test period.
+        training_start_date (str): Start date for the training period.
+        testing_start_date (str): Start date for the testing period.
+        real_scenario_start_date (str): Start date for the real-date scenario simulation period.
+        real_scenario_end_date (str): End date for the real-date scenario simulation period.
+        days_for_hedge_calc (int): Number of days to look back for calculating hedge ratio
+                                   for the additional simulation period.
+        pre_computed_stock_pairs_p_min (list, optional): A list of cointegrated pairs, if already computed.
+                                                           If None, cointegration test will be performed.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing detailed performance metrics for each pair
+                      across the training, testing, and additional simulation periods.
+    """
+
+    # 1. Perform cointegration test if not pre-computed
+    if pre_computed_stock_pairs_p_min is None:
+        stock_pairs_p_min, _ = self._perform_coint_test(df_AI_data, coint_start_date, coint_end_date)
+    else:
+        stock_pairs_p_min = pre_computed_stock_pairs_p_min
+
+    all_evaluation_results = []
+
+    # Define the end date for the 'training' period
+    training_end_date_for_analysis = (pd.to_datetime(testing_start_date) - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+    # Define the end date for the 'testing' period for _analyze_pair_performance
+    # This is one hour before the real_scenario_start_date
+    testing_end_date_for_analysis = (pd.to_datetime(real_scenario_start_date) - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+
+    # For each cointegrated pair
+    for pair_data in stock_pairs_p_min:
+        ticker1, ticker2, pvalue, score, crit_value = pair_data
+
+        # Ensure we have enough data for the current pair and specified dates
+        required_tickers = [ticker1, ticker2]
+        # For simplicity, we'll rely on individual function calls to handle data availability within their specific ranges.
+
+        # 2. Run _analyze_pair_performance for training/testing (fixed hedge ratio from training)
+        (annualized_returns_train, annualized_returns_test,
+         ret_tick1_train, ret_tick2_train, ret_tick1_test, ret_tick2_test,
+         coint_pvalue_returned, coint_score_returned,
+         num_entry_trades_training, num_entry_trades_testing,
+         sharpe_ratio_training, max_drawdown_training,
+         sharpe_ratio_testing, max_drawdown_testing,
+         _, _, _) = self._analyze_pair_performance(
+             df_AI_data, ticker1, ticker2, coint_pvalue=pvalue, coint_score=score,
+             training_start_date=training_start_date, training_end_date=training_end_date_for_analysis,
+             testing_start_date=testing_start_date, testing_end_date=testing_end_date_for_analysis
+         )
+
+        # 3. Additional simulation for hedge ratio calculation based on `days_for_hedge_calc`
+        # This evaluates performance using a hedge ratio calculated from a recent lookback window
+        # immediately preceding the real scenario period.
+
+        sim_hedge_calc_end_date = pd.to_datetime(real_scenario_start_date) - timedelta(hours=1)
+        sim_hedge_calc_start_date = sim_hedge_calc_end_date - timedelta(days=days_for_hedge_calc)
+
+        data_for_sim_hedge_calc = df_AI_data.loc[
+            sim_hedge_calc_start_date.strftime('%Y-%m-%d %H:%M:%S'):sim_hedge_calc_end_date.strftime('%Y-%m-%d %H:%M:%S'),
+            [ticker1, ticker2]
+        ].dropna()
+
+        sim_hedge_ratio = np.nan
+        sim_annualized_returns = np.nan
+        sim_sharpe_ratio = np.nan
+        sim_max_drawdown = np.nan
+        sim_num_entry_trades = 0 # Initialize for simulation period
+
+        if not data_for_sim_hedge_calc.empty and len(data_for_sim_hedge_calc) >= 2:
+            try:
+                X_sim_hedge = sm.add_constant(data_for_sim_hedge_calc[ticker2])
+                model_sim_hedge = sm.OLS(data_for_sim_hedge_calc[ticker1], X_sim_hedge)
+                results_sim_hedge = model_sim_hedge.fit()
+                sim_hedge_ratio = results_sim_hedge.params[ticker2]
+
+                # Prepare data for the real scenario period, including warmup for rolling calculations
+                data_sim_period_raw = df_AI_data.loc[real_scenario_start_date:real_scenario_end_date, [ticker1, ticker2]].dropna()
+
+                warmup_end = pd.to_datetime(real_scenario_start_date) - timedelta(hours=1)
+                warmup_start = warmup_end - timedelta(hours=self.window - 1) # Use self.window for warmup
+                warmup_data = df_AI_data.loc[warmup_start.strftime('%Y-%m-%d %H:%M:%S'):warmup_end.strftime('%Y-%m-%d %H:%M:%S'), [ticker1, ticker2]].dropna()
+
+                if not warmup_data.empty and not data_sim_period_raw.empty:
+                    data_sim_period = pd.concat([warmup_data, data_sim_period_raw])
+                elif not data_sim_period_raw.empty:
+                    data_sim_period = data_sim_period_raw
+                else:
+                    data_sim_period = pd.DataFrame()
+
+                if not data_sim_period.empty and len(data_sim_period_raw) >= 2: # Ensure raw test data has enough points
+                    (sim_annualized_returns, _, _, sim_num_entry_trades, sim_sharpe_ratio, sim_max_drawdown,
+                     _, _, _, _, _) = self._simulate_trades_and_calculate_returns(
+                         data_sim_period, sim_hedge_ratio, ticker1, ticker2
+                     )
+            except Exception as e:
+                print(f"Error in additional simulation for {ticker1}/{ticker2}: {e}")
+
+        all_evaluation_results.append({
+            'Ticker1': ticker1,
+            'Ticker2': ticker2,
+            'Cointegration P-value': coint_pvalue_returned,
+            'Cointegration Score': score,
+            'Crit Value': crit_value,
+
+            'Annualized Training Return': annualized_returns_train,
+            'Annualized Testing Return': annualized_returns_test,
+            'Simulation Annualized Return': sim_annualized_returns,
+
+            'Training Sharpe Ratio': sharpe_ratio_training,
+            'Testing Sharpe Ratio': sharpe_ratio_testing,
+            'Simulation Sharpe Ratio': sim_sharpe_ratio,
+
+            'Training Max Drawdown': max_drawdown_training,
+            'Testing Max Drawdown': max_drawdown_testing,
+            'Simulation Max Drawdown': sim_max_drawdown,
+
+            'Training Entry Trades': num_entry_trades_training,
+            'Testing Entry Trades': num_entry_trades_testing,
+            'Simulation Entry Trades': sim_num_entry_trades,
+
+            'Simulation Hedge Ratio': sim_hedge_ratio,
+        })
+
+    return pd.DataFrame(all_evaluation_results)
+
+
+def training_and_optimization(ai_tickers, initial_date, trades_history_file_name = 'trades_history1.csv',
+                 entry_threshold=1.5, exit_threshold=0.5, stop_loss_threshold=3.5,
+                 window=140, p_min_coint=0.05, fee=0.005, enter_trade_max = 3.0,
+                 min_training_return=0.5, min_training_sharpe=1, min_training_trades=1,
+                 max_training_drawdown=-0.4, min_testing_return=0.4, min_testing_sharpe=1,
+                 max_testing_drawdown=-0.4, min_sharpe_ratio_stability=0.5,
+                 max_sharpe_ratio_stability=2.0,
+                 min_annual_return_stability_ratio=0.5,
+                 max_annual_return_stability_ratio=2.0,
+                 min_testing_entry_trades=1,
+                 max_testing_entry_trades=8,
+                 min_two_months_profit_for_active=0.1, results_output_dir='.', compounded_profit=False, days_back=90):
     """
     Orchestrates the training and optimization process for pairs trading.
     This function identifies cointegrated pairs, evaluates their performance
@@ -575,7 +754,7 @@ def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', tra
 
     Args:
         ai_tickers (list): List of stock tickers to consider for pairs trading.
-        initial_date_ref_str (str): Reference date for setting up training and testing periods.
+        initial_date (str): The reference date string from which all other dates are calculated.
         trades_history_file_name (str): File to store the history of all trades.
         entry_threshold (float): Z-score threshold for entering a trade.
         exit_threshold (float): Z-score threshold for exiting a trade.
@@ -584,55 +763,109 @@ def training_and_optimization(ai_tickers, initial_date_ref_str='2026-01-01', tra
         p_min_coint (float): P-value threshold for cointegration test.
         fee (float): Transaction fee per trade.
         enter_trade_max (float): Maximum absolute Z-score to allow entering a new trade.
-        min_training_return (float): Minimum annualized return for training period.
-        min_training_sharpe (float): Minimum Sharpe ratio for training period.
-        min_training_trades (int): Minimum number of trades in training period.
-        max_training_drawdown (float): Maximum drawdown for training period.
-        min_testing_return (float): Minimum annualized return for testing period.
-        min_testing_sharpe (float): Minimum Sharpe ratio for testing period.
-        max_testing_drawdown (float): Maximum drawdown for testing period.
-        min_sharpe_ratio_stability (float): Minimum ratio of testing to training Sharpe ratio.
+        compounded_profit (bool): If True, profits are compounded; otherwise, they are added (default: False).
     """
+    # Define period lengths based on strategy
+    COINT_PERIOD_LENGTH_DAYS = 274 # days for cointegration
+    TRAINING_PERIOD_LENGTH_DAYS = 90 # days for training
+    TESTING_PERIOD_LENGTH_DAYS = 60 # days for testing
+
+    # Calculate dates for the optimization window based on initial_date
+    ref_dt = pd.to_datetime(initial_date)
+
+    testing_end_date_dt = ref_dt - timedelta(hours=1)
+    testing_start_date_dt = testing_end_date_dt - timedelta(days=TESTING_PERIOD_LENGTH_DAYS)
+
+    training_end_date_dt = testing_start_date_dt - timedelta(hours=1)
+    training_start_date_dt = training_end_date_dt - timedelta(days=TRAINING_PERIOD_LENGTH_DAYS)
+
+    coint_end_date_dt = training_end_date_dt
+    coint_start_date_dt = coint_end_date_dt - timedelta(days=COINT_PERIOD_LENGTH_DAYS)
+
+    coint_start_date_str = coint_start_date_dt.strftime('%Y-%m-%d %H:%M:%S')
+    coint_end_date_str = coint_end_date_dt.strftime('%Y-%m-%d %H:%M:%S')
+    training_start_date_str = training_start_date_dt.strftime('%Y-%m-%d %H:%M:%S')
+    training_end_date_str = training_end_date_dt.strftime('%Y-%m-%d %H:%M:%S')
+    testing_start_date_str = testing_start_date_dt.strftime('%Y-%m-%d %H:%M:%S')
+    testing_end_date_str = testing_end_date_dt.strftime('%Y-%m-%d')
+
     PairsTraining = PairsTradingManager(ai_tickers, trades_history_file_name,
                  entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_threshold=stop_loss_threshold,
                  window=window, p_min_coint=p_min_coint, fee=fee, enter_trade_max=enter_trade_max,
                  min_training_return=min_training_return, min_training_sharpe=min_training_sharpe, min_training_trades=min_training_trades,
                  max_training_drawdown=max_training_drawdown, min_testing_return=min_testing_return, min_testing_sharpe=min_testing_sharpe,
-                 max_testing_drawdown=max_testing_drawdown, min_sharpe_ratio_stability=min_sharpe_ratio_stability, min_two_months_profit_for_active=min_two_months_profit_for_active,
+                 max_testing_drawdown=max_testing_drawdown, min_sharpe_ratio_stability=min_sharpe_ratio_stability,
+                 max_sharpe_ratio_stability=max_sharpe_ratio_stability,
+                 min_annual_return_stability_ratio=min_annual_return_stability_ratio,
+                 max_annual_return_stability_ratio=max_annual_return_stability_ratio,
+                 min_testing_entry_trades=min_testing_entry_trades,
+                 max_testing_entry_trades=max_testing_entry_trades,
+                 min_two_months_profit_for_active=min_two_months_profit_for_active,
                  results_output_dir=results_output_dir)
-    # --- Define Dates training and Optimization ---
-    date_ref = pd.to_datetime(initial_date_ref_str)
-    initial_testing_end_date = date_ref - timedelta(days=1)
-    initial_testing_start_date = initial_testing_end_date - timedelta(days=30)
-    initial_training_end_date = initial_testing_start_date - timedelta(days=1)
-    initial_training_start_date = initial_training_end_date - timedelta(days=60)
 
-    df_ai_full_history_end_date = initial_testing_end_date
-    df_ai_full_history_start_date = initial_training_start_date - pd.DateOffset(years=1)
+    # Download full historical data covering all periods required for initial calculations.
+    # This ensures that even for the earliest training/cointegration periods, enough lookback data is available for `window` calculations.
+    full_data_download_start = pd.to_datetime(coint_start_date_dt).strftime('%Y-%m-%d')
+    full_data_download_end = pd.to_datetime(testing_end_date_str).strftime('%Y-%m-%d')
 
-    # Download full historical data for the initial testing phase
     df_AI_full = yf.download(PairsTraining.ai_tickers,
-                              start=df_ai_full_history_start_date.strftime('%Y-%m-%d'),
-                              end=df_ai_full_history_end_date.strftime('%Y-%m-%d'),
+                              start=full_data_download_start,
+                              end=full_data_download_end,
                               interval='1h', auto_adjust=True)['Close']
     df_AI_full = df_AI_full.dropna()
-    # 1. Perform initial cointegration test for 2025 period
+
+    # 1. Perform initial cointegration test
     stock_pairs_p_min, initial_full_coint_results = PairsTraining._perform_coint_test(
         df_AI_full,
-        initial_training_start_date.strftime('%Y-%m-%d'),
-        initial_training_end_date.strftime('%Y-%m-%d')
+        coint_start_date_str,
+        coint_end_date_str
     )
     # Save the full cointegration results to a CSV
     df_initial_full_coint = pd.DataFrame(initial_full_coint_results)
-    df_initial_full_coint.to_csv(os.path.join(results_output_dir, 'full_coint_results_initial_testing.csv'), index=False)
+    df_initial_full_coint.to_csv(os.path.join(results_output_dir, f'full_coint_results_initial_testing_{testing_end_date_str}.csv'), index=False)
 
     # 2. Select initial optimized pairs based on performance
-    df_optimized_pairs, _ = PairsTraining._select_optimized_pairs(
+    df_optimized_pairs, df_pair_results = PairsTraining._select_optimized_pairs(
         stock_pairs_p_min, df_AI_full,
-        training_start_date=initial_training_start_date.strftime('%Y-%m-%d'),
-        training_end_date=initial_training_end_date.strftime('%Y-%m-%d'),
-        testing_start_date=initial_testing_start_date.strftime('%Y-%m-%d'),
-        testing_end_date=initial_testing_end_date.strftime('%Y-%m-%d')
+        training_start_date=training_start_date_str,
+        training_end_date=training_end_date_str,
+        testing_start_date=testing_start_date_str,
+        testing_end_date=testing_end_date_str
     )
     # 3. Initialize trades.csv with the initially optimized pairs
     PairsTraining.update_trades_file(df_optimized_pairs)
+
+    # --- Calculate and store initial hedge_ratio for active pairs ---
+    df_trade_history = pd.read_csv(trades_history_file_name)
+    current_calc_date = pd.to_datetime(testing_end_date_str)
+    calc_start_date = current_calc_date - timedelta(days=days_back)
+
+    # Ensure data for calculation covers the required period for all tickers
+    df_data_for_hr_calc = df_AI_full.loc[calc_start_date.strftime('%Y-%m-%d'):current_calc_date.strftime('%Y-%m-%d')]
+    df_data_for_hr_calc = df_data_for_hr_calc.dropna()
+
+    for index, row in df_trade_history.iterrows():
+        if row['status'] == 'active':
+            ticker1 = row['Ticker1']
+            ticker2 = row['Ticker2']
+
+            # Ensure tickers exist in the downloaded data and have enough data points
+            if ticker1 in df_data_for_hr_calc.columns and ticker2 in df_data_for_hr_calc.columns and \
+               len(df_data_for_hr_calc[[ticker1, ticker2]].dropna()) >= 2:
+
+                data_for_pair = df_data_for_hr_calc[[ticker1, ticker2]].dropna()
+                if data_for_pair.empty or len(data_for_pair) < 2:
+                    continue
+
+                # Calculate hedge ratio using OLS
+                X = sm.add_constant(data_for_pair[ticker2])
+                model = sm.OLS(data_for_pair[ticker1], X).fit()
+                current_hedge_ratio = model.params[ticker2]
+
+                # Update the DataFrame row
+                df_trade_history.at[index, 'Hedge Ratio'] = current_hedge_ratio
+
+    df_trade_history.to_csv(trades_history_file_name, index=False)
+
+    # Return the optimized pairs and all pair results for further analysis
+    return df_optimized_pairs, df_pair_results
