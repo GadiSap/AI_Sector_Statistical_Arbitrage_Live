@@ -81,7 +81,7 @@ if __name__ == '__main__':
     ]
     # Define file names for trading
     directory = 'files/training'
-    trades_history_file_name = 'training_trades_history_hedge.csv' # File to store the history of all trades made by the strategy.
+    trades_history_file_name = 'training_trades_history.csv' # File to store the history of all trades made by the strategy.
 
     if not os.path.exists(directory):
         # if directory does not exist it will create it
