@@ -24,8 +24,8 @@ ai_tickers = [
     "PSTG", "KVYO", "ESTC", "FRSH", "IOT", "MSTR"
 ]
 # Define file names for trade history and time series data
-trades_history_file_name = 'files/trades_history2.csv' # File to store the history of all trades made by the strategy.
-time_series_file_name = 'files/trade_time_series2.csv' # File to store time-series data for analysis and plotting (Z-score, profits, etc.).
+trades_history_file_name = 'files/trades_history.csv' # File to store the history of all trades made by the strategy.
+time_series_file_name = 'files/trade_time_series.csv' # File to store time-series data for analysis and plotting (Z-score, profits, etc.).
 
 # Ensure the 'files' directory exists
 import os
@@ -35,36 +35,59 @@ os.makedirs('files', exist_ok=True)
 initial_date_ref_str = '2026-01-01' # Starting point for the initial training and optimization phase.
 date = '2026-04-16' # The end date for the entire simulation period.
 range_days = 104  # The total number of days the simulation will run for.
-days_back = 18 # Number of past days to consider for fetching historical data for daily trading decisions.
+days_back = 90 # Number of past days to consider for fetching historical data for daily trading decisions (hedge ratio).
 reoptimization_days = 60 # Frequency (in days) at which the strategy re-optimizes its trading pairs.
 
 entry_threshold_param = 1.5 # Z-score threshold to enter a new trade.
 exit_threshold_param = 0.5 # Z-score threshold to exit an open trade.
 stop_loss_threshold_param = 3.5 # Z-score threshold to trigger a stop-loss and close an open trade.
-enter_trade_max_param = 2.5 # Maximum absolute Z-score to allow entering a new trade; prevents trading in extreme conditions.
-window_param = 90 # Rolling window size in hr for calculating spread mean and standard deviation for the training and optimization phase.
+enter_trade_max_param = 3.0 # Maximum absolute Z-score to allow entering a new trade; prevents trading in extreme conditions.
+window_param = 140 # Rolling window size in hr for calculating spread mean and standard deviation for the training and optimization phase.
 p_min_coint_param = 0.05 # P-value threshold for the cointegration test; pairs with p-value below this are considered cointegrated.
 fee_param = 0.005 # Transaction fee per trade, expressed as a percentage.
-min_training_return_param = 1 # Minimum annualized return required for a pair during the training period to be considered optimized.
+min_training_return_param = 0.4 # Minimum annualized return required for a pair during the training period to be considered optimized.
 min_training_sharpe_param = 1 # Minimum Sharpe Ratio required for a pair during the training period.
-min_training_trades_param = 0 # Minimum number of entry trades required for a pair during the training period.
-max_training_drawdown_param = -0.3 # Maximum acceptable drawdown for a pair during the training period (e.g., -0.3 means no more than 30% loss).
-min_testing_return_param = 1 # Minimum annualized return required for a pair during the testing period.
+min_training_trades_param = 1 # Minimum number of entry trades required for a pair during the training period.
+max_training_drawdown_param = -0.4 # Maximum acceptable drawdown for a pair during the training period (e.g., -0.3 means no more than 30% loss).
+min_testing_return_param = 0.4 # Minimum annualized return required for a pair during the testing period.
 min_testing_sharpe_param = 1 # Minimum Sharpe Ratio required for a pair during the testing period.
-max_testing_drawdown_param = -0.3 # Maximum acceptable drawdown for a pair during the testing period.
+max_testing_drawdown_param = -0.4 # Maximum acceptable drawdown for a pair during the testing period.
 min_sharpe_ratio_stability_param = 0.5 # Minimum ratio of Testing Sharpe Ratio to Training Sharpe Ratio, ensuring consistent performance.
-min_two_months_profit_for_active_param = 0.03 # Minimum 'Two Months Profit' for a pair to remain active if no longer optimized.
+max_sharpe_ratio_stability_param = 2 # Maximum ratio of Testing Sharpe Ratio to Training Sharpe Ratio
+min_annual_return_stability_ratio_param = 0.5 # Minimum ratio of Annualized Testing Return to Annualized Training Return
+max_annual_return_stability_ratio_param = 2 # Maximum ratio of Annualized Testing Return to Annualized Training Return
+min_testing_entry_trades_param = 1 # Minimum number of entry trades during the testing period.
+max_testing_entry_trades_param = 8 # Maximum number of entry trades during the testing period.
+min_two_months_profit_for_active_param = 0.1 # Minimum 'Two Months Profit' for a pair to remain active if no longer optimized.
+compounded_profit_param = False # Parameter to control if profits are compounded or added.
+max_hedge_ratio_param = 5.0 # Maximum hedge ratio allowed for a trading.
+
 
 # --- Initial Training and Optimization ---
 # This step identifies the initial set of cointegrated pairs and optimizes their parameters.
 # The results are stored in trades_history_file_name.
-training_and_optimization(ai_tickers, initial_date_ref_str, trades_history_file_name,
+
+print("Starting initial training and optimization...")
+
+
+training_and_optimization(ai_tickers,
+                 initial_date=initial_date_ref_str,
+                 trades_history_file_name=trades_history_file_name,
                  entry_threshold=entry_threshold_param, exit_threshold=exit_threshold_param, stop_loss_threshold=stop_loss_threshold_param,
                  window=window_param, p_min_coint=p_min_coint_param, fee=fee_param, enter_trade_max=enter_trade_max_param,
                  min_training_return=min_training_return_param, min_training_sharpe=min_training_sharpe_param, min_training_trades=min_training_trades_param,
                  max_training_drawdown=max_training_drawdown_param, min_testing_return=min_testing_return_param, min_testing_sharpe=min_testing_sharpe_param,
-                 max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param, min_two_months_profit_for_active=min_two_months_profit_for_active_param,
-                 results_output_dir='files')
+                 max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param,
+                 max_sharpe_ratio_stability=max_sharpe_ratio_stability_param,
+                 min_annual_return_stability_ratio=min_annual_return_stability_ratio_param,
+                 max_annual_return_stability_ratio=max_annual_return_stability_ratio_param,
+                 min_testing_entry_trades=min_testing_entry_trades_param,
+                 max_testing_entry_trades=max_testing_entry_trades_param,
+                 min_two_months_profit_for_active=min_two_months_profit_for_active_param,
+                 results_output_dir='files', compounded_profit=compounded_profit_param, days_back=days_back)
+
+print("Initial training and optimization completed.")
+
 # --- Daily Trading Simulation ---
 # Initialize the time series file to ensure a clean start with all expected columns.
 # This file will record daily Z-scores, pair profits, and trade statuses for later analysis.
@@ -79,7 +102,6 @@ for i in range(range_days):
   # Calculate the end date for the current day's data download
   end_date = (pd.to_datetime(date) - timedelta(days=(range_days-1-i))).strftime('%Y-%m-%d')
 
-
   start_date = (pd.to_datetime(end_date) - timedelta(days=days_back)).strftime('%Y-%m-%d')
 
   # Download hourly data for the selected AI tickers for the current look-back window
@@ -92,18 +114,28 @@ for i in range(range_days):
     continue # Skip to the next day if no valid data
 
   # Execute the daily trading strategy
-  day_trade(df_AI_daily, trades_history_file_name, time_series_file_name, fee_param, entry_threshold_param, exit_threshold_param, stop_loss_threshold_param, enter_trade_max_param)
+  day_trade(df_AI_daily, trades_history_file_name, time_series_file_name, fee_param, entry_threshold_param, exit_threshold_param, stop_loss_threshold_param, enter_trade_max_param, compounded_profit=compounded_profit_param, window=window_param, max_hedge_ratio = max_hedge_ratio_param)
 
   # Check re-optimization
   today = pd.to_datetime(end_date)
   if today.day_of_year % reoptimization_days == 0:
     print(f"\nPerforming re-optimization for pairs at {end_date}...")
-    training_and_optimization(ai_tickers, initial_date_ref_str=end_date, trades_history_file_name=trades_history_file_name,
+
+
+
+    training_and_optimization(ai_tickers,
+                              initial_date=end_date,
+                              trades_history_file_name=trades_history_file_name,
                               entry_threshold=entry_threshold_param, exit_threshold=exit_threshold_param, stop_loss_threshold=stop_loss_threshold_param,
                               window=window_param, p_min_coint=p_min_coint_param, fee=fee_param, enter_trade_max=enter_trade_max_param,
                               min_training_return=min_training_return_param, min_training_sharpe=min_training_sharpe_param, min_training_trades=min_training_trades_param,
                               max_training_drawdown=max_training_drawdown_param, min_testing_return=min_testing_return_param, min_testing_sharpe=min_testing_sharpe_param,
-                              max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param, min_two_months_profit_for_active=min_two_months_profit_for_active_param,
-                              results_output_dir='files')
+                              max_testing_drawdown=max_testing_drawdown_param, min_sharpe_ratio_stability=min_sharpe_ratio_stability_param,
+                              max_sharpe_ratio_stability=max_sharpe_ratio_stability_param,
+                              min_annual_return_stability_ratio=min_annual_return_stability_ratio_param,
+                              max_annual_return_stability_ratio=max_annual_return_stability_ratio_param,
+                              min_testing_entry_trades=min_testing_entry_trades_param,
+                              max_testing_entry_trades=max_testing_entry_trades_param, results_output_dir='files',
+                              min_two_months_profit_for_active=min_two_months_profit_for_active_param, compounded_profit=compounded_profit_param, days_back=days_back)
 
 print("\nDaily trading simulation completed.")
