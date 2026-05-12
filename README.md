@@ -1,53 +1,62 @@
 # Pairs Trading Strategy with AI Stock Tickers
-
-This notebook implements a dynamic pairs trading strategy focused on Artificial Intelligence (AI) related stock tickers. The strategy identifies statistically cointegrated pairs, optimizes their trading parameters over training and testing periods, and simulates daily trading with periodic re-optimization to adapt to changing market conditions.
+This project implements a dynamic pairs trading strategy focused on Artificial Intelligence (AI) related stock tickers. The system features a robust Meta-Optimization pipeline to identify statistically cointegrated pairs and a Walk-Forward Simulation to trade them under realistic market conditions.
 
 ## Table of Contents
-1.  [Project Overview](#project-overview)
-2.  [Features](#features)
-3.  [Setup and Dependencies](#setup-and-dependencies)
-4.  [Usage](#usage)
-5.  [Key Files and Outputs](#key-files-and-outputs)
-6.  [Analysis and Visualization](#analysis-and-visualization)
+1. [Project Overview](#project-overview)
+2. [Research & Training Pipeline](#research--training-pipeline)
+3. [Execution (Simulation)](#execution-simulation)
+4. [Setup and Dependencies](#setup-and-dependencies)
+5. [Usage](#usage)
+6. [Key Files and Outputs](#key-files-and-outputs)
 
 ## Project Overview
-This project aims to profit from the mean-reverting nature of cointegrated stock pairs. It involves:
-*   **Cointegration Testing**: Identifying pairs of stocks that move together over the long term.
-*   **Strategy Optimization**: Backtesting identified pairs to find best pairs to trade based on historical performance.
-*   **Daily Trading Simulation**: Executing trades based on Z-scores of the spread between pair prices.
-*   **Periodic Re-optimization**: Adapting the set of active trading pairs and their parameters to maintain strategy effectiveness.
+This project aims to capture Alpha from the mean-reverting nature of cointegrated stock pairs within the volatile AI sector. The workflow is divided into two distinct phases:
 
-## Features
-*   **Dynamic Pair Selection**: Utilizes Engle-Granger cointegration test to find suitable pairs from a given list of tickers.
-*   **Parameter Optimization**: Evaluates pairs based on training and testing period performance metrics (returns, Sharpe ratio, drawdown, number of trades).
-*   **Robust Trade Management**: Implements entry, exit, and stop-loss conditions based on Z-scores of the spread.
-*   **Hourly Data Backtesting**: Simulates trading using hourly price data, providing granular insights.
-*   **Trade History and Time-Series Tracking**: Records detailed trade information and daily snapshots of Z-scores and profits.
+*   **Research (Training)**: A brute-force grid search across hundreds of parameter combinations using historical data to find the most stable pairs and thresholds.
+*   **Execution (Simulation)**: A daily trading loop that applies locked hedge ratios and Z-score logic to simulate live-market performance.
+
+## Research & Training Pipeline
+To mitigate overfitting and identify structural relationships, the project includes a `Training.py` script that executes a high-performance evaluation of strategy parameters:
+
+*   **Parameter Grid Search**: Systematically tests combinations of Entry/Exit thresholds, rolling windows, and hedge lookbacks.
+*   **Parallel Computing**: Utilizes Python's `multiprocessing` to distribute 900+ simulation combinations across all available CPU cores for maximum efficiency.
+*   **Stability Validation**: Pairs are filtered not just by total return, but by Sharpe Stability and Annual Return Stability ratios between training and testing periods to optimize for long-term consistency.
+*   **Data Utility**: This data is used to find the best parameters for the trading strategy and for selecting the most robust pairs to trade.
+
+## Execution (Simulation)
+Once parameters are optimized, the strategy enters the execution phase, which simulates a live trading environment with the following logic:
+
+*   **Optimization and Pair Selection**: Performs Cointegration Testing and Backtesting over training and testing periods to select the specific pairs to trade based on the selection criteria determined in the Research & Training phase.
+*   **Hourly Decision Engine**: Processes market data on an hourly basis to calculate Z-scores and manage positions.
+*   **Rolling & Locked Hedge Ratios**: Calculates a 90-day rolling hedge ratio (Beta) while a pair is "flat." Once a position is initiated, the hedge ratio is locked to reflect real-world execution where share quantities remain fixed until the trade is closed.
+*   **Risk Controls**: Implements an `enter_trade_max` filter to block entries during extreme volatility shocks (non-reverting moves) and a hard stop-loss at a 3.5σ deviation.
+*   **Transaction Fee Modeling**: Deducts a 0.5% fee per trade to provide a realistic assessment of net profitability.
+*   **Adaptive Re-optimization**: Automatically triggers a full re-optimization every 60 days to prune underperforming pairs and rotate into new cointegrated opportunities.
 
 ## Setup and Dependencies
-To run this notebook, you'll need the following Python libraries. You can install them using pip:
+Install the required libraries via `pip`:
 
 ```bash
-!pip install pandas numpy yfinance statsmodels 
+pip install pandas numpy yfinance statsmodels tqdm
 ```
 
-Ensure your Python environment has these installed. This notebook specifically uses `yfinance` to download historical market data and `statsmodels` for cointegration testing and OLS regression.
-
 ## Usage
-1.  **Define AI Tickers**: Customize the `ai_tickers` list with the stock symbols you want to analyze.
-2.  **Set Parameters**: Adjust the various trading and optimization parameters, such as `entry_threshold_param`, `exit_threshold_param`, `stop_loss_threshold_param`, `reoptimization_days`, and minimum performance criteria.
-3.  **Initial Training and Optimization**: The notebook first performs an initial training and optimization phase to identify promising pairs. This involves downloading historical data, running cointegration tests, and backtesting pairs over defined training and testing periods.
-4.  **Daily Trading Simulation**: After initial setup, the script loops through a specified `range_days`, simulating daily trading. For each day, it downloads the latest hourly data, applies the trading strategy to active pairs, and updates trade records.
-5.  **Periodic Re-optimization**: Every `reoptimization_days`, the strategy re-runs the optimization process to refresh its set of active pairs, ensuring adaptability to changing market dynamics.
+### 1. Strategy Training (Optimization)
+Run the training script to find the best parameters for the current market regime:
 
-### Key Functions:
-*   `TradingHr` class: Manages individual trades, calculates profits, and applies entry/exit/stop-loss logic on data simulating "live" trading.
-*   `PairsTradingManager` class: Orchestrates cointegration tests, pair performance analysis, and selection of optimized pairs on "older" data.
-*   `training_and_optimization` function: Drives the initial and periodic pair selection process.
-*   `day_trade` function (in TradingHr.py) : Executes the hourly trading logic for a given day.
+```bash
+python Training.py
+```
+This generates a comprehensive CSV in `files/training/` detailing how different thresholds and windows performed across training, testing, and simulation phases.
+
+### 2. Trading Simulation
+Update the parameters in the main simulation script based on your training results and run:
+
+*   **Initial Selection**: Orchestrates pair selection via the `training_and_optimization` function.
+*   **Daily Simulation**: The script loops through the specified date range, downloading hourly data and updating trade records in real-time.
 
 ## Key Files and Outputs
-*   trades_history_file_name: Stores the final status and cumulative profit for each traded pair.
-*   time_series_file_name: Records detailed time-series data for each pair, including Z-scores, current profits, and trade statuses, enabling granular analysis and plotting.
-*   `all_pair_results_YYYY-MM-DD.csv`: Generated during optimization, this file contains performance metrics for all tested pairs (training and testing periods).
-*   `full_coint_results_initial_testing.csv`: Contains the results of all cointegration tests performed during the initial optimization phase.
+*   `training_trades_history_hedge.csv`: The primary output of the meta-optimization, used to select the final strategy parameters and active pairs.
+*   `trades_history.csv`: Stores the current status, entry prices, locked hedge ratios, and cumulative profit for all active trading pairs.
+*   `trade_time_series.csv`: Granular hourly records of Z-scores, unrealized PnL, and trade statuses for in-depth analysis used for plotting.
+*   `all_pair_results_YYYY-MM-DD.csv`: Detailed performance breakdown for every potential pair identified during the selection phase.
